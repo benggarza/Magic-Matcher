@@ -3,3 +3,4 @@ reports/cardlists/*
 reports/commanderlists/*
 src/__pycache__
 *.html
+pdh_notes
