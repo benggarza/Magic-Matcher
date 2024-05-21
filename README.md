@@ -23,3 +23,4 @@ To use these functions, edit the main function with your choice of function call
 
 - add terminal interaction support
 - add pauper edh support (web scraping pdhrec)
+- add partner/background support

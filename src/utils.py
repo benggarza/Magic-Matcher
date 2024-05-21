@@ -1,4 +1,6 @@
+from bs4 import BeautifulSoup
 import pandas
+import requests
 from unidecode import unidecode
 import re
 
@@ -28,9 +30,13 @@ def format_keys(names : pandas.Series) -> list:
     return keys
 
 # score function for cards
-def get_score(num : int, potential : int) -> float:
+# pauper gets a different scoring due to low sample size
+# often a commander only has one deck, in which case every card is +2
+def get_score(num : int, potential : int, pdh : bool = False) -> float:
     #return 1 + (1-math.exp(-(num/potential)))/(1-math.exp(-1))
     #return 2-((num/potential)-1)**2
+    if pdh:
+        return 1 + ((num-0.5)/potential)**2
     return 1 + (num/potential)**2
 
 # given a score and a list of top scores, return the proper index or -1
@@ -48,3 +54,48 @@ def insert(elem, i : int, l : list):
         shift_elem = temp
         temp = l[ind]
         l[ind] = shift_elem
+
+def get_cardlist(key : str, pauper : bool = False):
+    if pauper:
+        # Scrape pdhrec for cardlist, and put it into a dict with cols : name, num_decks, potential_decks
+        pdhrec_page = requests.get(f'https://www.pdhrec.com/commander/{key}/')
+        soup = BeautifulSoup(pdhrec_page.text, 'html.parser')
+        potential_decks = 0
+
+        # get the total number of decks, the first one found should be the one we want
+        try:
+            info = soup.find('div', attrs={"class":"info"})
+            potential_decks = int(re.search(r'\d+', info.string).group())
+        except:
+            return None
+
+        cardlist = []
+        # warning! this search also finds the commander element, should be the first
+        hyperlinks = soup.find_all('a', attrs={"class":"gallery-item"})
+        for hyperlink in hyperlinks[1:]:
+            name = ''
+            card = hyperlink.contents[1]
+            # double faced cards have a wrapper to show both sides at same time
+            if card.name == 'div':
+                card = card.contents[1].contents[3]
+                print(f'dfc {card["alt"]}')
+            name = card['alt']
+
+            num_decks = potential_decks
+            try:
+                num_decks = int(hyperlink['popularity'])
+            except:
+                #print(f'Found a weird page for {key}, not calculating usage rate (setting num_decks for {name} to {num_decks})')
+                pass
+
+            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks})
+        return cardlist
+    else:
+        # Grab the json from edhrec
+        edhrec_json = requests.get(f'https://json.edhrec.com/pages/commanders/{key}.json').json()
+
+        cardlist = []
+        try:
+            cardlist = edhrec_json['cardlist']
+        except:
+            return None
