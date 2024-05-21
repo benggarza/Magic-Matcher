@@ -1,0 +1,4 @@
+data/*.csv
+reports/cardlists/*
+reports/commanderlists/*
+src/__pycache__

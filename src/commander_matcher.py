@@ -181,9 +181,9 @@ def search_all_color_identities(num_top : int = sys.maxsize, ):
 
 def main():
     # start with a general top list
-    search_all_commanders(score_threshold=100, num_top=100)
+    #search_all_commanders(score_threshold=100, num_top=100)
     # then search through each color identity
-    search_all_color_identities()
+    #search_all_color_identities()
     # THEN search through my commanders
     search_my_commanders(30)
 
