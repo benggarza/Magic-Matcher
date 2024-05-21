@@ -16,3 +16,10 @@ commander_matcher.py is the main workhorse. There are three main functions you w
 - search_all_color_identities(num_top): This simply iterates through all 32 different color identities and returns top commander lists of each. Very nice if your collection is one color identity heavy and you want to expand your horizons.
 
 - search_my_commanders(num_top, score_threshold): This function requires that you have a Moxfield-formatted commander csv in the data directory. Instead of searching all legal commanders, this scores only the commanders in your collection (more specifically in your commanders.csv).
+
+To use these functions, edit the main function with your choice of function calls. In the future I will make this script interactive with terminal for easier use.
+
+# Todos
+
+- add terminal interaction support
+- add pauper edh support (web scraping pdhrec)
