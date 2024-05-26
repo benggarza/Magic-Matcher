@@ -22,8 +22,5 @@ To use these functions, edit the main function with your choice of function call
 # Todos
 
 - add terminal interaction support
-- add pauper edh support (web scraping pdhrec)
-- add partner/background support
 - GUI integration
-- refactor the commander search s.t. it only requires one pass for all color idendities
 - add estimated upgrade costs with each commander score (something like minimum cost to increase score to 150 or something)

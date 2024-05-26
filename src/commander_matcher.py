@@ -6,7 +6,8 @@ import math
 from unidecode import unidecode
 from math import sqrt
 import sys
-from utils import valid_ci, format_keys, get_score, insert, get_index_rank, get_cardlist, get_scryfall_df, generate_partners, get_ci_set
+from utils import valid_ci, format_keys, get_score, insert, get_index_rank, get_ci_set
+from requester import get_cardlist, get_commanders_from_scryfall
 
 def search_my_commanders(num_top : int = 10, score_threshold : float = 0, pdh : bool = False):
     # Grab list of commanders
@@ -27,42 +28,13 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
     collection_df = pandas.read_csv('data/collection/collection.csv')
     collection_names = collection_df['Name'].drop_duplicates().to_list()
 
-    #ci_query = ''
-    #if ci is not None:
-    #    ci_query = f'ci%3D{ci}'
-
-    
-
     commanders = pandas.DataFrame()
     try:
-        commanders = pandas.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv')
+        commanders = pandas.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv', converters={'color_identity': eval})
     except:
         print("Downloading commander list from scryfall...")
-    #has_next_page = True
-    #page=1
-    #while has_next_page:
-    #    commander_json = requests.get(f'https://api.scryfall.com/cards/search?q={legal_query}+{commander_query}+{ci_query}+{no_bg_query}+game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
-    #    has_next_page = commander_json['has_more']
-    #    commander_names = pandas.concat([commander_names, pandas.Series([card['name'] for card in commander_json['data']])])
-    #    print(f"{min(page*175, commander_json['total_cards'])}/{commander_json['total_cards']} ({min(1.0, page*175/commander_json['total_cards']):.2%})")
-    #    time.sleep(0.5)
-    #    page += 1
-        legal_query = 'legal%3Apdh' if pdh else 'legal%3Acommander'
+        commanders = get_commanders_from_scryfall(pdh=pdh)
 
-    # uncommon creatures
-        commander_query = 't%3Acreature+r%3Auncommon' if pdh else 'is%3Acommander'
-
-        no_bg_query = '-t%3Abackground'
-
-        queries = [legal_query, commander_query, no_bg_query]
-        commanders = get_scryfall_df(queries)
-        commanders = pandas.concat([commanders, generate_partners(commanders)])
-
-        commanders['color_identity'] = commanders['color_identity'].map(lambda ci: repr(ci))
-
-        commanders.to_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv')
-
-    commanders['color_identity'] = commanders['color_identity'].map(lambda ci: eval(ci))
     commanders_color = commanders
     if ci is not None:
         ci_set = get_ci_set(ci)
@@ -173,7 +145,6 @@ def get_scoreprice_list(commander_name :str):
     return None
 
 def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False):
-    #search_my_commanders(20)
     # test color identity filtering
     colors = ['w','u','b','r','g']
     color_pairs = ['rakdos','golgari','selesnya','boros','dimir','azorius','orzhov', 'izzet', 'simic','gruul']
@@ -204,7 +175,7 @@ def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False)
 
 def main():
     # start with a general top list
-    search_all_commanders(num_top=50)
+    #search_all_commanders(num_top=50)
     search_all_commanders(num_top=50,pdh=True)
     # then search through each color identity
     search_all_color_identities(num_top=50)
