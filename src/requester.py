@@ -24,12 +24,31 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         # warning! this search also finds the commander element, should be the first
         hyperlinks = soup.find_all('a', attrs={"class":"gallery-item"})
         for hyperlink in hyperlinks[1:]:
+            dfc = False
             name = ''
             card = hyperlink.contents[1]
             # double faced cards have a wrapper to show both sides at same time
             if card.name == 'div':
+                dfc = True
                 card = card.contents[1].contents[3]
             name = card['alt']
+
+            price = 0.0
+            if dfc:
+                # pdhrec doesn't have price info for double faced cards, so we gotta grab it from scryfall ourselves
+                scryfall_key = re.sub('\W+', '+', name)
+                card_page = requests.get(f'https://api.scryfall.com/cards/named?fuzzy={scryfall_key}&format=json').json()
+                if card_page['object'] == 'error':
+                    print(f"Error: scryfall found errors with dfc query: \"{card_page['details']}\" ")
+                else:
+                #card_df = pd.DataFrame(card_page)
+                    price_field = card_page['prices']['usd']
+                    if price_field is None:
+                        price_field = card_page['prices']['usd_foil']
+                    price = float(price_field)
+            else:
+                price_str = hyperlink.find('div', attrs={"class":"card-price"}).contents[-1]
+                price = float(re.search(r'\d\.\d\d', price_str).group())
 
 
             # some pdhrec pages are missing popularities and synergies (see Auspicious Starrix)
@@ -42,7 +61,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             except:
                 pass
 
-            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy})
+            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy, 'price':price})
     else:
         # Grab the json from edhrec
         edhrec_json = requests.get(f'https://json.edhrec.com/pages/commanders/{key}.json').json()
