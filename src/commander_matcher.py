@@ -10,11 +10,11 @@ from utils import valid_ci, format_keys, get_score, insert, get_index_rank, get_
 
 def search_my_commanders(num_top : int = 10, score_threshold : float = 0, pdh : bool = False):
     # Grab list of commanders
-    commander_df = pandas.read_csv('data/pdh_commanders.csv' if pdh else 'data/commanders.csv')
+    commander_df = pandas.read_csv('data/collection/pdh_commanders.csv' if pdh else 'data/collection/commanders.csv')
     commander_names = commander_df['Name'].drop_duplicates()
     commander_keys = format_keys(commander_names)
 
-    collection_df = pandas.read_csv('data/collection.csv')
+    collection_df = pandas.read_csv('data/collection/collection.csv')
     collection_names = collection_df['Name'].drop_duplicates().to_list()
 
     search_commanders(commander_keys, commander_names, collection_names, 'my', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
@@ -24,7 +24,7 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
             print(f"Error: Invalid color identity {ci}")
             exit(1)
 
-    collection_df = pandas.read_csv('data/collection.csv')
+    collection_df = pandas.read_csv('data/collection/collection.csv')
     collection_names = collection_df['Name'].drop_duplicates().to_list()
 
     ci_query = ''
@@ -40,7 +40,7 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
 
     commander_names = pandas.Series()
     try:
-        commander_df = pandas.read_csv(f'data/{ci if ci is not None else "all"}_{"pdh_" if pdh else ""}commanders.csv')
+        commander_df = pandas.read_csv(f'data/scryfall/{ci if ci is not None else "all"}_{"pdh_" if pdh else ""}commanders.csv')
         commander_names = commander_df['name']
     except:
         print("Downloading commander list from scryfall...")
@@ -53,7 +53,7 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
             print(f"{min(page*175, commander_json['total_cards'])}/{commander_json['total_cards']} ({min(1.0, page*175/commander_json['total_cards']):.2%})")
             time.sleep(0.5)
             page += 1
-        pandas.DataFrame(commander_names, columns=['name']).to_csv(f'data/{ci if ci is not None else "all"}_{"pdh_" if pdh else ""}commanders.csv')
+        pandas.DataFrame(commander_names, columns=['name']).to_csv(f'data/scryfall/{ci if ci is not None else "all"}_{"pdh_" if pdh else ""}commanders.csv')
 
     commander_names = commander_names.iloc[start:min(start+depth, len(commander_names))]
 
@@ -67,8 +67,14 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
     best_commanders = [""]*num_top
     best_scores = [0]*num_top
     best_nums = [0]*num_top
+
+    skiplist = pandas.read_csv('data/collection/skip.csv')['name'].to_list()
     # For each commander...
     for i, (commander_name, commander_key) in enumerate(zip(commander_names, commander_keys)):
+        # skip commanders in skiplist
+        if commander_name in skiplist:
+            print(f"{commander_name} found in skiplist, skipping...")
+            continue
         print(f"{i+1}/{len(commander_names)}: Evaluating {commander_name}")
         cardlist = get_cardlist(commander_key, pauper=pdh) 
         if cardlist is None:
@@ -76,7 +82,7 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
             continue
 
         namelist = [card['name'] for card in cardlist]
-        scorelist = [get_score(card['num_decks'],card['potential_decks'], pdh=pdh) for card in cardlist]
+        scorelist = [get_score(card['num_decks'],card['potential_decks'], card['synergy'], pdh=pdh) for card in cardlist]
         #print(namelist)
 
         # Count how many cards from collection show up in recommended cards (maybe have a bag-of-cards list for indices)
@@ -113,14 +119,14 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
             f.write(f"Rank {rank+1:2d}:\t{cname:31}\tnum cards {cnum:3d}\t score {cscore:3.3f}\n")
 
 def get_commander_cardlist(commander_name : str, pdh : bool = False):
-    commander_df = pandas.read_csv(f'data/all_{"pdh_" if pdh else ""}commanders.csv')
+    commander_df = pandas.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv')
     if commander_name not in commander_df['name'].to_list():
         print(f"Error: {commander_name} is an invalid commander name")
         exit(1)
 
     commander_key = format_keys(pandas.Series([commander_name]))[0]
 
-    collection_df = pandas.read_csv('data/collection.csv')
+    collection_df = pandas.read_csv('data/collection/collection.csv')
     collection_names = collection_df['Name'].drop_duplicates().to_list()
 
     rec_cardlist = get_cardlist(commander_key, pauper=pdh)
@@ -183,11 +189,15 @@ def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False)
 
 def main():
     # start with a general top list
-    #search_all_commanders(num_top=100, pdh=True)
+    #search_all_commanders(num_top=50, pdh=True)
     # then search through each color identity
-    #search_all_color_identities()
+    #search_all_color_identities(num_top=50, pdh=False)
+    #search_all_color_identities(num_top=50, pdh=True)
     # THEN search through my commanders
-    search_my_commanders(30, pdh=True)
+    #search_my_commanders(30, pdh=False)
+
+    search_all_commanders(ci='wubrg')
+    search_all_commanders(pdh=True, ci='wubrg')
 
 if __name__ == '__main__':
     main()

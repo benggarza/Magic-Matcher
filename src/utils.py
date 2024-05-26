@@ -30,14 +30,13 @@ def format_keys(names : pandas.Series) -> list:
     return keys
 
 # score function for cards
-# pauper gets a different scoring due to low sample size
-# often a commander only has one deck, in which case every card is +2
-def get_score(num : int, potential : int, pdh : bool = False) -> float:
+# low sample sizes get reduced impact scores due to high variance
+def get_score(num : int, potential : int, synergy : float, pdh : bool = False) -> float:
     #return 1 + (1-math.exp(-(num/potential)))/(1-math.exp(-1))
     #return 2-((num/potential)-1)**2
-    if pdh:
-        return 1 + ((num-0.5)/potential)**2
-    return 1 + (num/potential)**2
+    if potential < 5:
+        return 1 + ((num-0.5)/potential)**2 + max(0,synergy-0.5)
+    return 1 + (num/potential)**2 + max(0,synergy)
 
 # given a score and a list of top scores, return the proper index or -1
 def get_index_rank(candidate_score : float, top_scores : list):
@@ -82,13 +81,20 @@ def get_cardlist(key : str, pauper : bool = False):
             name = card['alt']
 
             num_decks = potential_decks
+            
             try:
                 num_decks = int(hyperlink['popularity'])
             except:
                 #print(f'Found a weird page for {key}, not calculating usage rate (setting num_decks for {name} to {num_decks})')
                 pass
 
-            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks})
+            synergy = 0
+            try:
+                synergy = float(hyperlink['synergy'])
+            except:
+                pass
+
+            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy})
         return cardlist
     else:
         # Grab the json from edhrec
@@ -98,4 +104,6 @@ def get_cardlist(key : str, pauper : bool = False):
         try:
             cardlist = edhrec_json['cardlist']
         except:
+            print('get_cardlist: edhrec json is empty')
             return None
+        return cardlist
