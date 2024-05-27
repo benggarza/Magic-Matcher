@@ -176,7 +176,7 @@ def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False)
 def main():
     # start with a general top list
     #search_all_commanders(num_top=50)
-    search_all_commanders(num_top=50,pdh=True)
+    search_all_commanders(num_top=50,pdh=False)
     # then search through each color identity
     search_all_color_identities(num_top=50)
     search_all_color_identities(num_top=50, pdh=True)

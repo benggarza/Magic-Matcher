@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 import pandas
 import requests
+from urllib.parse import quote
 from unidecode import unidecode
 import re
 import time
@@ -43,6 +44,11 @@ def format_keys(names : pandas.Series) -> list:
     _keys = _keys.apply(lambda name: re.sub('[ ]{2,}', ' ', name))
     keys = _keys.apply(lambda _name: re.sub(' ', '-', _name).lower()).to_list()
     return keys
+
+def format_scryfall_string(s : str):
+    fs = quote(s, safe=' ')
+    fs = re.sub('\s+', '+', fs)
+    return fs
 
 # score function for cards
 # low sample sizes get reduced impact scores due to high variance

@@ -3,8 +3,10 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import time
+from utils import format_scryfall_string
 
 def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
+    missing_prices = []
     if pauper:
         # Scrape pdhrec for cardlist, and put it into a dict with cols : name, num_decks, potential_decks
         pdhrec_page = requests.get(f'https://www.pdhrec.com/commander/{key}/')
@@ -23,7 +25,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         cardlist = []
         # warning! this search also finds the commander element, should be the first
         hyperlinks = soup.find_all('a', attrs={"class":"gallery-item"})
-        for hyperlink in hyperlinks[1:]:
+        for idx, hyperlink in enumerate(hyperlinks, start=-1):
             dfc = False
             name = ''
             card = hyperlink.contents[1]
@@ -36,16 +38,13 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             price = 0.0
             if dfc:
                 # pdhrec doesn't have price info for double faced cards, so we gotta grab it from scryfall ourselves
-                scryfall_key = re.sub('\W+', '+', name)
-                card_page = requests.get(f'https://api.scryfall.com/cards/named?fuzzy={scryfall_key}&format=json').json()
-                if card_page['object'] == 'error':
-                    print(f"Error: scryfall found errors with dfc query: \"{card_page['details']}\" ")
-                else:
-                #card_df = pd.DataFrame(card_page)
-                    price_field = card_page['prices']['usd']
-                    if price_field is None:
-                        price_field = card_page['prices']['usd_foil']
-                    price = float(price_field)
+                missing_prices.append({'name':name,'idx':idx})
+                #card_page = scryfall_card_query(name)
+                #if card_page is not None:
+                #    price_field = card_page['prices']['usd']
+                #    if price_field is None:
+                #        price_field = card_page['prices']['usd_foil']
+                #    price = float(price_field)
             else:
                 price_str = hyperlink.find('div', attrs={"class":"card-price"}).contents[-1]
                 price = float(re.search(r'\d\.\d\d', price_str).group())
@@ -79,6 +78,54 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         except:
             print('get_cardlist: edhrec json is empty')
             return None
+        
+        # queue cards for prices,and remove unneeded sanitized name fields and edhrec urls
+        for idx, card in enumerate(cardlist):
+            missing_prices.append({'name':card['name'],'idx':idx})
+            #card_page = scryfall_card_query(card['name'])
+            #if card_page is not None:
+            #    price_field = card_page['prices']['usd']
+            #    if price_field is None:
+            #        price_field = card_page['prices']['usd_foil']
+            #    price = float(price_field)
+            #card['price'] = price
+
+            card.pop('sanitized', None)
+            card.pop('sanitized_wo', None)
+            card.pop('url', None)
+
+    #finally, get the prices for the missing cards
+    # we do this in one query to help scryfall out
+    query = ""
+    missing_prices_df = pd.DataFrame(missing_prices, columns=['name','idx'])
+    # first element
+    formatted_names = missing_prices_df['name'].apply(format_scryfall_string)
+    # scryfall has a limit on accepted URI's so we'll break this into chunks
+    block_size = 30
+    num_blocks = len(formatted_names)//block_size + 1
+
+    # first block
+    query = f"%28%21%22{formatted_names.iloc[0]}%22+or+%21%22"
+    query += f"%22+or+%21%22".join(formatted_names.iloc[1:block_size])
+    query += f"%22%29"
+    cards = scryfall_query([query])
+
+    for b in range(1, num_blocks):
+        query = f"%28%21%22{formatted_names.iloc[b*block_size]}%22+or+%21%22"
+        query += f"%22+or+%21%22".join(formatted_names.iloc[b*block_size+1:min((b+1)*block_size, len(formatted_names))])
+        query += f"%22%29"
+        block_cards = scryfall_query([query])
+        cards = pd.concat([cards, block_cards])
+    
+    #cards_prices = cards[['name','price']]
+
+    names_and_prices = missing_prices_df.merge(cards, on='name')
+
+    # not liking the iterrows usage here....
+    for row in names_and_prices.itertuples():
+        assert(row.name==cardlist[row.idx]['name'])
+        cardlist[row.idx]['price'] = row.price
+
     return cardlist
 
 def set_partners(commander : pd.Series) -> str:
@@ -112,17 +159,31 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
     cards = pd.DataFrame(columns=['name','color_identity','keywords', 'oracle_text'])
     while has_next_page:
         result_json = requests.get(f'https://api.scryfall.com/cards/search?q={query_str}game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
+        if result_json['object']=='error':
+            print(f'request error: {result_json["code"]}, {result_json["status"]}')
+            print(result_json['details'])
+            return None
         has_next_page = result_json['has_more']
 
         data = pd.DataFrame(result_json['data'])
-        card_page = data[['name', 'color_identity', 'keywords', 'oracle_text']]
+        card_page = data[['name', 'color_identity', 'keywords', 'oracle_text', 'prices']]
 
         cards = pd.concat([cards, card_page])
         print(f"{min(page*175, result_json['total_cards'])}/{result_json['total_cards']} ({min(1.0, page*175/result_json['total_cards']):.2%})")
         time.sleep(0.5)
         page += 1
     cards['color_identity'] = cards['color_identity'].map(lambda ci: set(ci))
+    cards['price'] = cards['prices'].map(lambda prices: prices['usd_foil'] if prices['usd'] is None else prices['usd']).astype(float)
+    cards.drop('prices',axis=1,inplace=True)
     return cards
+
+def scryfall_card_query(name : str):
+    scryfall_key = re.sub('\W+', '+', name)
+    card_page = requests.get(f'https://api.scryfall.com/cards/named?fuzzy={scryfall_key}&format=json').json()
+    if card_page['object'] == 'error':
+        print(f"Error: scryfall found errors with dfc query: \"{card_page['details']}\" ")
+        return None
+    return card_page
 
 def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataFrame:
     # pdhrec doesn't do redirects, so the partners must be in alphabetical order
