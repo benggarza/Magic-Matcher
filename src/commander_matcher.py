@@ -72,6 +72,10 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
         scorelist = [get_score(card['num_decks'],card['potential_decks'], card['synergy'], pdh=pdh) for card in cardlist]
         #print(namelist)
 
+        # this is not for scryfall now, but for edhrec and pdhrec
+        # if i can setup storage of their lists, i can remove the sleep
+        time.sleep(0.5)
+
         # Count how many cards from collection show up in recommended cards (maybe have a bag-of-cards list for indices)
         commander_score = 0
         num_cards = 0
@@ -79,6 +83,7 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
             if name in collection:
                 commander_score += score
                 num_cards += 1
+        commander_score *= 100/len(namelist)
         print(f"Score: {commander_score:3.3f}\tNum Cards: {num_cards:3d}")
         if commander_score > score_threshold:
             commander_rank = get_index_rank(commander_score, best_scores)
@@ -86,8 +91,6 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
                 insert(commander_score, commander_rank, best_scores)
                 insert(commander_name, commander_rank, best_commanders)
                 insert(num_cards, commander_rank, best_nums)
-        #print(best_commander_scores, top_5_commanders)
-        time.sleep(0.5)
 
     # trim any empty elements from the lists
     i = num_top

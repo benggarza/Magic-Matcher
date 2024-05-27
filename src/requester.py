@@ -6,7 +6,13 @@ import time
 from utils import format_scryfall_string
 
 def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
+    price_reference = pd.DataFrame(columns=['name','price'])
+    try:
+        price_reference = pd.read_csv('data/scryfall/price_reference.csv', index_col=0)
+    except:
+        pass
     missing_prices = []
+    new_prices = []
     if pauper:
         # Scrape pdhrec for cardlist, and put it into a dict with cols : name, num_decks, potential_decks
         pdhrec_page = requests.get(f'https://www.pdhrec.com/commander/{key}/')
@@ -38,16 +44,16 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             price = 0.0
             if dfc:
                 # pdhrec doesn't have price info for double faced cards, so we gotta grab it from scryfall ourselves
-                missing_prices.append({'name':name,'idx':idx})
-                #card_page = scryfall_card_query(name)
-                #if card_page is not None:
-                #    price_field = card_page['prices']['usd']
-                #    if price_field is None:
-                #        price_field = card_page['prices']['usd_foil']
-                #    price = float(price_field)
+                # lets see if its in the price reference
+                price_ref_idx = price_reference.index[price_reference['name']==name].tolist()
+                if len(price_ref_idx) > 0:
+                    price = price_reference.at[price_ref_idx[0],'price']
+                else:
+                    missing_prices.append({'name':name,'idx':idx})
             else:
                 price_str = hyperlink.find('div', attrs={"class":"card-price"}).contents[-1]
                 price = float(re.search(r'\d\.\d\d', price_str).group())
+                new_prices.append({'name':name,'price':price})
 
 
             # some pdhrec pages are missing popularities and synergies (see Auspicious Starrix)
@@ -81,14 +87,14 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         
         # queue cards for prices,and remove unneeded sanitized name fields and edhrec urls
         for idx, card in enumerate(cardlist):
-            missing_prices.append({'name':card['name'],'idx':idx})
-            #card_page = scryfall_card_query(card['name'])
-            #if card_page is not None:
-            #    price_field = card_page['prices']['usd']
-            #    if price_field is None:
-            #        price_field = card_page['prices']['usd_foil']
-            #    price = float(price_field)
-            #card['price'] = price
+            price_ref_idx = price_reference.index[price_reference['name']==card['name']].tolist()
+            if len(price_ref_idx) == 0:
+                # try again, but this time mask off any back side card names
+                price_ref_idx = price_reference.index[price_reference['name'].str.replace(' // .+', '', regex=True)==card['name']].tolist()
+            if len(price_ref_idx) > 0:
+                price = price_reference.at[price_ref_idx[0],'price']
+            else:
+                missing_prices.append({'name':card['name'],'idx':idx})
 
             card.pop('sanitized', None)
             card.pop('sanitized_wo', None)
@@ -96,35 +102,67 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
 
     #finally, get the prices for the missing cards
     # we do this in one query to help scryfall out
-    query = ""
-    missing_prices_df = pd.DataFrame(missing_prices, columns=['name','idx'])
-    # first element
-    formatted_names = missing_prices_df['name'].apply(format_scryfall_string)
-    # scryfall has a limit on accepted URI's so we'll break this into chunks
-    block_size = 30
-    num_blocks = len(formatted_names)//block_size + 1
+    if len(missing_prices) > 0:
+        query = ""
+        missing_prices_df = pd.DataFrame(missing_prices, columns=['name','idx'])
+        # first element
+        formatted_names = missing_prices_df['name'].apply(format_scryfall_string)
+        # scryfall has a limit on accepted URI's so we'll break this into chunks
+        block_size = 30
+        # could use ceiling here but dont want to import math for some reason
+        num_blocks = (len(formatted_names)-1)//block_size + 1
 
-    # first block
-    query = f"%28%21%22{formatted_names.iloc[0]}%22+or+%21%22"
-    query += f"%22+or+%21%22".join(formatted_names.iloc[1:block_size])
-    query += f"%22%29"
-    cards = scryfall_query([query])
+        # first block
+        query = f"%28%21%22{formatted_names.iloc[0]}%22"
+        if len(formatted_names) > 1:
+            query += f"+or+%21%22"
+            query += f"%22+or+%21%22".join(formatted_names.iloc[1:block_size])
+            query += f"%22"
+        query += f"%29"
+        cards = scryfall_query([query])
 
-    for b in range(1, num_blocks):
-        query = f"%28%21%22{formatted_names.iloc[b*block_size]}%22+or+%21%22"
-        query += f"%22+or+%21%22".join(formatted_names.iloc[b*block_size+1:min((b+1)*block_size, len(formatted_names))])
-        query += f"%22%29"
-        block_cards = scryfall_query([query])
-        cards = pd.concat([cards, block_cards])
-    
-    #cards_prices = cards[['name','price']]
+        for b in range(1, num_blocks):
+            query = f"%28%21%22{formatted_names.iloc[b*block_size]}%22+or+%21%22"
+            query += f"%22+or+%21%22".join(formatted_names.iloc[b*block_size+1:min((b+1)*block_size, len(formatted_names))])
+            query += f"%22%29"
+            block_cards = scryfall_query([query])
+            cards = pd.concat([cards, block_cards],ignore_index=True)
 
-    names_and_prices = missing_prices_df.merge(cards, on='name')
+        # this is where the issue is.
+        # e.g. missing_prices_df has "Jin Gitaxias"
+        # but cards has "Jin Gitaxias // The Great Synthesis"
+        names_and_prices = missing_prices_df.merge(cards, on='name',how='outer')
+        # if a row x does not have a price, then there is another row y where x.name is in y.name
+        # combine the two ...
+        #for row in names_and_prices.iterrows():
 
-    # not liking the iterrows usage here....
-    for row in names_and_prices.itertuples():
-        assert(row.name==cardlist[row.idx]['name'])
-        cardlist[row.idx]['price'] = row.price
+        no_match = names_and_prices[names_and_prices['price'].isnull()]
+        for row in no_match.itertuples(index=True):
+            row_pair_idx = names_and_prices.index[names_and_prices['name'].str.contains(f'{row.name} // ', regex=True)][0]
+            names_and_prices.at[row_pair_idx, 'idx'] = int(row.idx)
+            names_and_prices.drop(row.Index, inplace=True)
+        names_and_prices['idx'] = names_and_prices['idx'].astype('int64')
+
+        # not liking the iterrows usage here....
+        for row in names_and_prices.itertuples():
+            assert(row.name==cardlist[row.idx]['name'] or cardlist[row.idx]['name'] + ' // ' in row.name)
+            #print(f"Adding {row.name} to new prices ({row.price})")
+            cardlist[row.idx]['price'] = row.price
+            new_prices.append({'name':row.name, 'price':row.price})
+
+
+    # finally, add the new prices to the reference for future lookups
+    if len(new_prices) > 0:
+        pr_size_old = len(price_reference)
+        #new_prices = pd.concat([pd.DataFrame(new_prices,columns=['name','price']), cards[['name','price']]], ignore_index=True)
+        new_prices = pd.DataFrame(new_prices, columns=['name','price'])
+        price_reference = price_reference.merge(new_prices, on='name', how='outer')
+        pr_size_new = len(price_reference)
+        price_reference['price'] = price_reference['price_y']
+        price_reference['price'] = price_reference['price'].combine_first(price_reference['price_x'])
+        price_reference.drop(['price_x', 'price_y'], axis=1,inplace=True)
+        print(f"added {pr_size_new - pr_size_old} lines to price reference. now {pr_size_new} rows big")
+        price_reference.to_csv('data/scryfall/price_reference.csv')
 
     return cardlist
 
@@ -154,6 +192,7 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
     query_str = ''
     for q in queries:
         query_str += q + '+'
+        print(query_str)
     has_next_page = True
     page=1
     cards = pd.DataFrame(columns=['name','color_identity','keywords', 'oracle_text'])
@@ -166,14 +205,17 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         has_next_page = result_json['has_more']
 
         data = pd.DataFrame(result_json['data'])
+        # if its all dfc cards, oracle_text will not be in the columns. add a dummy column
+        if 'oracle_text' not in data.columns:
+            data['oracle_text'] = ''
         card_page = data[['name', 'color_identity', 'keywords', 'oracle_text', 'prices']]
 
-        cards = pd.concat([cards, card_page])
+        cards = pd.concat([cards, card_page], ignore_index=True)
         print(f"{min(page*175, result_json['total_cards'])}/{result_json['total_cards']} ({min(1.0, page*175/result_json['total_cards']):.2%})")
         time.sleep(0.5)
         page += 1
     cards['color_identity'] = cards['color_identity'].map(lambda ci: set(ci))
-    cards['price'] = cards['prices'].map(lambda prices: prices['usd_foil'] if prices['usd'] is None else prices['usd']).astype(float)
+    cards['price'] = cards['prices'].map(lambda prices: prices['usd_foil'] if pd.isna(prices['usd']) else prices['usd']).astype(float)
     cards.drop('prices',axis=1,inplace=True)
     return cards
 
@@ -266,7 +308,7 @@ def get_commanders_from_scryfall(pdh : bool = False) -> pd.DataFrame:
     commanders.drop(['keywords','oracle_text'], axis=1, inplace=True)
 
     # the DataFrame cast is just for vscode purposes, not required
-    commanders = pd.DataFrame(pd.concat([commanders, generate_partners(commanders)]))
+    commanders = pd.DataFrame(pd.concat([commanders, generate_partners(commanders)], ignore_index=True))
 
     # save the file...
     commanders['color_identity'] = commanders['color_identity'].map(lambda ci: repr(ci))
