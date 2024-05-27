@@ -46,7 +46,9 @@ def format_keys(names : pandas.Series) -> list:
     return keys
 
 def format_scryfall_string(s : str):
-    fs = quote(s, safe=' ')
+    # Kongming, "Sleeping Dragon"
+    fs = re.sub('\"', '\'', s)
+    fs = quote(fs, safe=' ')
     fs = re.sub('\s+', '+', fs)
     return fs
 

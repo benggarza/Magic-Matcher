@@ -6,6 +6,13 @@ import time
 from utils import format_scryfall_string
 
 def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
+    try:
+        cardlist_df = pd.read_csv(f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv')
+        return cardlist_df.to_dict('records')
+    except:
+        print("Could not find a preexisting cardlist, querying...")
+        pass
+
     price_reference = pd.DataFrame(columns=['name','price'])
     try:
         price_reference = pd.read_csv('data/scryfall/price_reference.csv', index_col=0)
@@ -66,7 +73,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             except:
                 pass
 
-            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy, 'price':price})
+            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy})
     else:
         # Grab the json from edhrec
         edhrec_json = requests.get(f'https://json.edhrec.com/pages/commanders/{key}.json').json()
@@ -93,6 +100,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
                 price_ref_idx = price_reference.index[price_reference['name'].str.replace(' // .+', '', regex=True)==card['name']].tolist()
             if len(price_ref_idx) > 0:
                 price = price_reference.at[price_ref_idx[0],'price']
+                #card['price'] = price
             else:
                 missing_prices.append({'name':card['name'],'idx':idx})
 
@@ -147,7 +155,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         for row in names_and_prices.itertuples():
             assert(row.name==cardlist[row.idx]['name'] or cardlist[row.idx]['name'] + ' // ' in row.name)
             #print(f"Adding {row.name} to new prices ({row.price})")
-            cardlist[row.idx]['price'] = row.price
+            #cardlist[row.idx]['price'] = row.price
             new_prices.append({'name':row.name, 'price':row.price})
 
 
@@ -163,7 +171,8 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         price_reference.drop(['price_x', 'price_y'], axis=1,inplace=True)
         print(f"added {pr_size_new - pr_size_old} lines to price reference. now {pr_size_new} rows big")
         price_reference.to_csv('data/scryfall/price_reference.csv')
-
+    # save the cardlist so we don't need to query again in the future
+    pd.DataFrame(cardlist, columns=['name','num_decks','potential_decks','synergy']).to_csv(f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv')
     return cardlist
 
 def set_partners(commander : pd.Series) -> str:
