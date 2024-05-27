@@ -4,14 +4,29 @@ import pandas as pd
 import re
 import time
 from utils import format_scryfall_string
+import os
+import datetime
 
 def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
+    filepath = f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv'
     try:
-        cardlist_df = pd.read_csv(f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv')
-        return cardlist_df.to_dict('records')
+        mod_date = os.path.getmtime(filepath)
+        # if it's been longer than 2 weeks, remove the file and get a new one
+        if datetime.datetime.now() - datetime.datetime.fromtimestamp(mod_date) > datetime.timedelta(days=14):
+            print(f'Found old file for {key}, removing and getting a new one..')
+            os.remove(filepath)
+    except:
+        pass
+    try:
+        cardlist_df = pd.read_csv(filepath)
+        if len(cardlist_df) == 0:
+            print(f'No data for {key}')
+            return None
+        else:
+            return cardlist_df.to_dict('records')
     except:
         print("Could not find a preexisting cardlist, querying...")
-        pass
+        time.sleep(0.5)
 
     price_reference = pd.DataFrame(columns=['name','price'])
     try:
@@ -23,7 +38,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
     if pauper:
         # Scrape pdhrec for cardlist, and put it into a dict with cols : name, num_decks, potential_decks
         pdhrec_page = requests.get(f'https://www.pdhrec.com/commander/{key}/')
-        soup = BeautifulSoup(pdhrec_page.text, 'html.parser')
+        soup = BeautifulSoup(pdhrec_page.text, 'html5lib')
         potential_decks = 0
 
         # get the total number of decks, the first one found should be the one we want
@@ -33,12 +48,17 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             potential_decks = int(re.search(r'\d+', info.string).group())
         except:
             print('get_cardlist: pdhrec page is empty')
+            # let's make an empty file to indicate that there is no page
+            pd.DataFrame(columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
             return None
 
         cardlist = []
         # warning! this search also finds the commander element, should be the first
         hyperlinks = soup.find_all('a', attrs={"class":"gallery-item"})
-        for idx, hyperlink in enumerate(hyperlinks, start=-1):
+        # attempting to remove the commander element
+        # its an issue with partner commanders, as the structure of that elem is very different
+        hyperlinks.pop(0)
+        for idx, hyperlink in enumerate(hyperlinks):
             dfc = False
             name = ''
             card = hyperlink.contents[1]
@@ -47,6 +67,11 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
                 dfc = True
                 card = card.contents[1].contents[3]
             name = card['alt']
+            # a bad? encoding of lim-dûl's paladin made this an issue
+            name = re.sub('Ã»', 'û', name)
+            #pdhrec doesn't handle kongmind's name well, so we have a manual fix
+            if 'Kongming,' in name:
+                name = 'Kongming, \"Sleeping Dragon\"'
 
             price = 0.0
             if dfc:
@@ -58,9 +83,19 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
                 else:
                     missing_prices.append({'name':name,'idx':idx})
             else:
-                price_str = hyperlink.find('div', attrs={"class":"card-price"}).contents[-1]
-                price = float(re.search(r'\d\.\d\d', price_str).group())
-                new_prices.append({'name':name,'price':price})
+                try:
+                    price_str = hyperlink.find('div', attrs={"class":"card-price"}).contents[-1]
+                    price = float(re.search(r'\d\.\d\d', price_str).group())
+                    new_prices.append({'name':name,'price':price})
+                except:
+                    # if its not a dfc but pdh doesnt have it, lets see if the reference has it
+                    # otherwise we ask scryfall
+                    price_ref_idx = price_reference.index[price_reference['name']==name].tolist()
+                    if len(price_ref_idx) > 0:
+                        price = price_reference.at[price_ref_idx[0],'price']
+                    else:
+                        print(f"Added {name} to missing prices")
+                        missing_prices.append({'name':name,'idx':idx})
 
 
             # some pdhrec pages are missing popularities and synergies (see Auspicious Starrix)
@@ -90,6 +125,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             cardlist = edhrec_json['cardlist']
         except:
             print('get_cardlist: edhrec json is empty')
+            pd.DataFrame(columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
             return None
         
         # queue cards for prices,and remove unneeded sanitized name fields and edhrec urls
@@ -145,15 +181,24 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         #for row in names_and_prices.iterrows():
 
         no_match = names_and_prices[names_and_prices['price'].isnull()]
+        print(no_match.head())
         for row in no_match.itertuples(index=True):
-            row_pair_idx = names_and_prices.index[names_and_prices['name'].str.contains(f'{row.name} // ', regex=True)][0]
-            names_and_prices.at[row_pair_idx, 'idx'] = int(row.idx)
+            # for some reason the PDHRec page for Mesmeric Fiend includes Chittering Host, a meld card??
+            if row.name not in  ['Forest','Mountain','Plains','Swamp','Island', 'Chittering Host']:
+                row_pair_idx = names_and_prices.index[names_and_prices['name'].str.contains(f'{row.name} // ', regex=True)][0]
+                names_and_prices.at[row_pair_idx, 'idx'] = int(row.idx)
             names_and_prices.drop(row.Index, inplace=True)
         names_and_prices['idx'] = names_and_prices['idx'].astype('int64')
 
         # not liking the iterrows usage here....
         for row in names_and_prices.itertuples():
-            assert(row.name==cardlist[row.idx]['name'] or cardlist[row.idx]['name'] + ' // ' in row.name)
+            if not (row.name==cardlist[row.idx]['name'] or cardlist[row.idx]['name'] + ' // ' in row.name):
+                print(f'Error: assertion failed on {row.name} and {cardlist[row.idx]["name"]}')
+                for i,c in enumerate(cardlist):
+                    if c['name'] == row.name:
+                        print(f'Actual index was {i}, but used {row.idx}')
+                        break
+                assert(False)
             #print(f"Adding {row.name} to new prices ({row.price})")
             #cardlist[row.idx]['price'] = row.price
             new_prices.append({'name':row.name, 'price':row.price})
@@ -172,7 +217,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         print(f"added {pr_size_new - pr_size_old} lines to price reference. now {pr_size_new} rows big")
         price_reference.to_csv('data/scryfall/price_reference.csv')
     # save the cardlist so we don't need to query again in the future
-    pd.DataFrame(cardlist, columns=['name','num_decks','potential_decks','synergy']).to_csv(f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv')
+    pd.DataFrame(cardlist, columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
     return cardlist
 
 def set_partners(commander : pd.Series) -> str:
@@ -224,7 +269,7 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         time.sleep(0.5)
         page += 1
     cards['color_identity'] = cards['color_identity'].map(lambda ci: set(ci))
-    cards['price'] = cards['prices'].map(lambda prices: prices['usd_foil'] if pd.isna(prices['usd']) else prices['usd']).astype(float)
+    cards['price'] = cards['prices'].map(lambda prices: prices['eur'] if pd.isna(prices['usd_foil']) else prices['usd_foil'] if pd.isna(prices['usd']) else prices['usd']).astype(float)
     cards.drop('prices',axis=1,inplace=True)
     return cards
 
@@ -252,8 +297,12 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
         for i in range(commander.Index+1, len(partner)):
             commander_partner = partner.iloc[i]
             partners_name = commander.name + ' ' + commander_partner['name']
+
+            oppo_name = commander_partner['name'] + ' ' + commander.name
+            if oppo_name in [p['name'] for p in partners]:
+                print('oops, this commander pair is already accounted for')
             partners_color_identity = commander.color_identity | commander_partner['color_identity']
-            partners.append([partners_name, partners_color_identity, 'none'])
+            partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 
     background_query = ['t%3Abackground']
     if pdh:
@@ -265,7 +314,7 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
         for bg in backgrounds.itertuples():
             cbg_name = commander.name + ' ' + bg.name
             cbg_color_identity = commander.color_identity | bg.color_identity
-            partners.append([cbg_name, cbg_color_identity, 'none'])
+            partners.append({'name':cbg_name, 'color_identity':cbg_color_identity, 'partner':'none'})
 
     
 
@@ -274,7 +323,7 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
             commander_partner = friends_forever.iloc[i]
             partners_name = commander.name + ' ' + commander_partner['name']
             partners_color_identity = commander.color_identity |  commander_partner['color_identity']
-            partners.append([partners_name, partners_color_identity, 'none'])
+            partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 
     #doctor_and_companion = []
     #doctor_companion = commanders[commanders['partner'] == 'Doctor\'s companion']
@@ -296,7 +345,7 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
         # try to not have duplicates e.g. Faldan and Pako and Pako and Faldan
         if commander_partner['name'] + ' ' + commander.name in [p[0] for p in partners]:
             continue
-        partners.append([partners_name, partners_color_identity, 'none'])
+        partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 
     return pd.DataFrame(partners, columns=commanders.columns)
     

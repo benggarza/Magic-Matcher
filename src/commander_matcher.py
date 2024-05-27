@@ -74,7 +74,7 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
 
         # this is not for scryfall now, but for edhrec and pdhrec
         # if i can setup storage of their lists, i can remove the sleep
-        time.sleep(0.5)
+        #time.sleep(0.5)
 
         # Count how many cards from collection show up in recommended cards (maybe have a bag-of-cards list for indices)
         commander_score = 0
@@ -83,7 +83,8 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
             if name in collection:
                 commander_score += score
                 num_cards += 1
-        commander_score *= 100/len(namelist)
+        #if len(namelist) > 100:
+        #    commander_score *= 100/len(namelist)
         print(f"Score: {commander_score:3.3f}\tNum Cards: {num_cards:3d}")
         if commander_score > score_threshold:
             commander_rank = get_index_rank(commander_score, best_scores)
@@ -178,8 +179,8 @@ def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False)
 
 def main():
     # start with a general top list
-    #search_all_commanders(num_top=50)
-    search_all_commanders(num_top=50,pdh=False)
+    search_all_commanders(num_top=50)
+    search_all_commanders(num_top=50,pdh=True)
     # then search through each color identity
     search_all_color_identities(num_top=50)
     search_all_color_identities(num_top=50, pdh=True)

@@ -58,7 +58,7 @@ def get_score(num : int, potential : int, synergy : float, pdh : bool = False) -
     #return 1 + (1-math.exp(-(num/potential)))/(1-math.exp(-1))
     #return 2-((num/potential)-1)**2
     if potential < 5:
-        return 1 + ((num-0.5)/potential)**2 + max(0,synergy-0.5)
+        return 1 + ((num-0.5)/potential)**3 + max(0,synergy)**4
     return 1 + (num/potential)**2 + max(0,synergy)
 
 # given a score and a list of top scores, return the proper index or -1
