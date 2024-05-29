@@ -7,6 +7,7 @@ from utils import format_scryfall_string
 import os
 import datetime
 
+# TODO : also get scryfall oracle ids for each card as indexing for all dataframes
 def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
     filepath = f'data/{"pdhrec" if pauper else "edhrec"}/{key}.csv'
     try:
@@ -20,7 +21,6 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
     try:
         cardlist_df = pd.read_csv(filepath)
         if len(cardlist_df) == 0:
-            print(f'No data for {key}')
             return None
         else:
             return cardlist_df.to_dict('records')
@@ -28,13 +28,14 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         print("Could not find a preexisting cardlist, querying...")
         time.sleep(0.5)
 
-    price_reference = pd.DataFrame(columns=['name','price'])
+    price_reference = pd.DataFrame(columns=['oracle_id','name','price'])
     try:
         price_reference = pd.read_csv('data/scryfall/price_reference.csv', index_col=0)
     except:
         pass
     missing_prices = []
     new_prices = []
+    rec_cardlist = []
     if pauper:
         # Scrape pdhrec for cardlist, and put it into a dict with cols : name, num_decks, potential_decks
         pdhrec_page = requests.get(f'https://www.pdhrec.com/commander/{key}/')
@@ -52,7 +53,6 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             pd.DataFrame(columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
             return None
 
-        cardlist = []
         # warning! this search also finds the commander element, should be the first
         hyperlinks = soup.find_all('a', attrs={"class":"gallery-item"})
         # attempting to remove the commander element
@@ -73,6 +73,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             if 'Kongming,' in name:
                 name = 'Kongming, \"Sleeping Dragon\"'
 
+            """
             price = 0.0
             if dfc:
                 # pdhrec doesn't have price info for double faced cards, so we gotta grab it from scryfall ourselves
@@ -94,8 +95,8 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
                     if len(price_ref_idx) > 0:
                         price = price_reference.at[price_ref_idx[0],'price']
                     else:
-                        print(f"Added {name} to missing prices")
                         missing_prices.append({'name':name,'idx':idx})
+            """
 
 
             # some pdhrec pages are missing popularities and synergies (see Auspicious Starrix)
@@ -108,7 +109,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             except:
                 pass
 
-            cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy})
+            rec_cardlist.append({'name':name, 'num_decks':num_decks, 'potential_decks':potential_decks, 'synergy':synergy})
     else:
         # Grab the json from edhrec
         edhrec_json = requests.get(f'https://json.edhrec.com/pages/commanders/{key}.json').json()
@@ -120,14 +121,14 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         except:
             pass
 
-        cardlist = []
         try:
-            cardlist = edhrec_json['cardlist']
+            rec_cardlist = edhrec_json['cardlist']
         except:
             print('get_cardlist: edhrec json is empty')
             pd.DataFrame(columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
             return None
         
+        """
         # queue cards for prices,and remove unneeded sanitized name fields and edhrec urls
         for idx, card in enumerate(cardlist):
             price_ref_idx = price_reference.index[price_reference['name']==card['name']].tolist()
@@ -143,34 +144,41 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             card.pop('sanitized', None)
             card.pop('sanitized_wo', None)
             card.pop('url', None)
+        """
 
-    #finally, get the prices for the missing cards
-    # we do this in one query to help scryfall out
-    if len(missing_prices) > 0:
-        query = ""
-        missing_prices_df = pd.DataFrame(missing_prices, columns=['name','idx'])
-        # first element
-        formatted_names = missing_prices_df['name'].apply(format_scryfall_string)
-        # scryfall has a limit on accepted URI's so we'll break this into chunks
-        block_size = 30
-        # could use ceiling here but dont want to import math for some reason
-        num_blocks = (len(formatted_names)-1)//block_size + 1
+    # query price reference for each card in cardlist, getting oracle id and price
+    cardlist_df = pd.DataFrame(rec_cardlist, columns=['name','num_decks','potential_decks','synergy'])
+    cardlist_df['dfc_name'] = cardlist_df['name'] + ' // '
+    dfc_price_reference = price_reference
+    dfc_price_reference['dfc_name'] = price_reference['name'].str.extract(r'(^.* \/\/ )')
 
-        # first block
-        query = f"%28%21%22{formatted_names.iloc[0]}%22"
-        if len(formatted_names) > 1:
-            query += f"+or+%21%22"
-            query += f"%22+or+%21%22".join(formatted_names.iloc[1:block_size])
-            query += f"%22"
-        query += f"%29"
-        cards = scryfall_query([query])
+    # cols: oracle_id, name, num_decks, potential_decks, synergy, price, color_identity, keywords, oracle_text
 
-        for b in range(1, num_blocks):
-            query = f"%28%21%22{formatted_names.iloc[b*block_size]}%22+or+%21%22"
-            query += f"%22+or+%21%22".join(formatted_names.iloc[b*block_size+1:min((b+1)*block_size, len(formatted_names))])
-            query += f"%22%29"
-            block_cards = scryfall_query([query])
-            cards = pd.concat([cards, block_cards],ignore_index=True)
+    # First, get all normal cards from price reference
+    card_info = cardlist_df.join(price_reference, how='left', on='name')
+
+    # Second, get all double faced cards with different naming from reference
+    card_info = card_info.join(dfc_price_reference, how='left', on='dfc_name', lsuffix='', rsuffix='_')
+
+    card_info = card_info[['oracle_id','name','dfc_name','num_decks','potential_decks','synergy','price']]
+    print(card_info.head())
+    #collect missing information
+    missing_info_mask = card_info.isna().any(axis=1)
+    # cols: oracle_id, name, color_identity, keywords, oracle_text, price
+    scryfall_card_data = scryfall_cardlist_query( cardlist_df['name'][missing_info_mask] )
+
+    # make both the scryfall name and rec name '<frontside name> // '
+    scryfall_card_data['dfc_name'] = scryfall_card_data['name'].str.extract(r'.* \/\/ ')
+
+    card_info = card_info.join(scryfall_card_data, how='left', on='name', lsuffix='', rsuffix='_scry')
+    card_info = card_info.join(scryfall_card_data, how='left', on='dfc_name', lsuffix='', rsuffix='_scry_dfc')
+
+    card_info = card_info.assign(price=card_info[['price','price_scry','price_scry_dfc']].sum(1)).drop(['price_scry','price_scry_dfc'], axis=1)
+
+    print(card_info[card_info.isna().any(axis=1)].head())
+
+
+    """
 
         # this is where the issue is.
         # e.g. missing_prices_df has "Jin Gitaxias"
@@ -202,6 +210,7 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             #print(f"Adding {row.name} to new prices ({row.price})")
             #cardlist[row.idx]['price'] = row.price
             new_prices.append({'name':row.name, 'price':row.price})
+    """
 
 
     # finally, add the new prices to the reference for future lookups
@@ -217,8 +226,8 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         print(f"added {pr_size_new - pr_size_old} lines to price reference. now {pr_size_new} rows big")
         price_reference.to_csv('data/scryfall/price_reference.csv')
     # save the cardlist so we don't need to query again in the future
-    pd.DataFrame(cardlist, columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
-    return cardlist
+    #pd.DataFrame(cardlist, columns=['name','num_decks','potential_decks','synergy']).to_csv(filepath)
+    return None
 
 def set_partners(commander : pd.Series) -> str:
     partner = 'none'
@@ -242,6 +251,33 @@ def set_partners(commander : pd.Series) -> str:
         partner = 'Doctor\'s companion'
     return partner
 
+def scryfall_cardlist_query(cardnames : pd.Series) -> pd.DataFrame:
+    query = ""
+    # first element
+    formatted_names = cardnames.apply(format_scryfall_string)
+    # scryfall has a limit on accepted URI's so we'll break this into chunks
+    block_size = 30
+    # could use ceiling here but dont want to import math for some reason
+    num_blocks = (len(formatted_names)-1)//block_size + 1
+
+    # first block
+    query = f"%28%21%22{formatted_names.iloc[0]}%22"
+    if len(formatted_names) > 1:
+        query += f"+or+%21%22"
+        query += f"%22+or+%21%22".join(formatted_names.iloc[1:block_size])
+        query += f"%22"
+    query += f"%29"
+    cards = scryfall_query([query])
+
+    for b in range(1, num_blocks):
+        query = f"%28%21%22{formatted_names.iloc[b*block_size]}%22+or+%21%22"
+        query += f"%22+or+%21%22".join(formatted_names.iloc[b*block_size+1:min((b+1)*block_size, len(formatted_names))])
+        query += f"%22%29"
+        block_cards = scryfall_query([query])
+        cards = pd.concat([cards, block_cards],ignore_index=True)
+
+    return cards
+
 def scryfall_query(queries : list[str]) -> pd.DataFrame:
     query_str = ''
     for q in queries:
@@ -249,9 +285,9 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         print(query_str)
     has_next_page = True
     page=1
-    cards = pd.DataFrame(columns=['name','color_identity','keywords', 'oracle_text'])
+    cards = pd.DataFrame(columns=['oracle_id','name','color_identity','keywords', 'oracle_text'])
     while has_next_page:
-        result_json = requests.get(f'https://api.scryfall.com/cards/search?q={query_str}game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
+        result_json = requests.get(f'https://api.scryfall.com/cards/search?q={query_str}+cheapest%3Ausd+game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
         if result_json['object']=='error':
             print(f'request error: {result_json["code"]}, {result_json["status"]}')
             print(result_json['details'])
@@ -262,17 +298,18 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         # if its all dfc cards, oracle_text will not be in the columns. add a dummy column
         if 'oracle_text' not in data.columns:
             data['oracle_text'] = ''
-        card_page = data[['name', 'color_identity', 'keywords', 'oracle_text', 'prices']]
+        card_page = data[['oracle_id', 'name', 'color_identity', 'keywords', 'oracle_text', 'prices']]
 
         cards = pd.concat([cards, card_page], ignore_index=True)
         print(f"{min(page*175, result_json['total_cards'])}/{result_json['total_cards']} ({min(1.0, page*175/result_json['total_cards']):.2%})")
-        time.sleep(0.5)
+        time.sleep(0.1)
         page += 1
     cards['color_identity'] = cards['color_identity'].map(lambda ci: set(ci))
     cards['price'] = cards['prices'].map(lambda prices: prices['eur'] if pd.isna(prices['usd_foil']) else prices['usd_foil'] if pd.isna(prices['usd']) else prices['usd']).astype(float)
     cards.drop('prices',axis=1,inplace=True)
     return cards
 
+# TODO: pretty sure this function isn't used anymore
 def scryfall_card_query(name : str):
     scryfall_key = re.sub('\W+', '+', name)
     card_page = requests.get(f'https://api.scryfall.com/cards/named?fuzzy={scryfall_key}&format=json').json()

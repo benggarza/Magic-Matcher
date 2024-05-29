@@ -48,6 +48,7 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
 
     search_commanders(commander_keys, commander_names, collection_names, ci if ci is not None else 'all', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
 
+# TODO: remove as many of these iterations as possible, replace with merges, vector operations
 def search_commanders(commander_keys : pandas.Series, commander_names : pandas.Series, collection : list, category_name : str,
                       num_top : int = 10, score_threshold : float = 0,
                       pdh : bool = False):
@@ -55,7 +56,7 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
     best_scores = [0]*num_top
     best_nums = [0]*num_top
 
-    skiplist = pandas.read_csv('data/collection/skip.csv')['name'].to_list()
+    skiplist = pandas.read_csv('data/collection/skip.csv')#['name'].to_list()
     # For each commander...
     for i, (commander_name, commander_key) in enumerate(zip(commander_names, commander_keys)):
         # skip commanders in skiplist
