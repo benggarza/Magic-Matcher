@@ -70,6 +70,8 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
 
         namelist = [card['name'] for card in cardlist]
         scorelist = [get_score(card['num_decks'],card['potential_decks'], card['synergy'], pdh=pdh) for card in cardlist]
+        weightlist = pandas.Series([card['num_decks']/card['potential_decks'] for card in cardlist])
+        price_df = get_pricelist(cardlist)
         #print(namelist)
 
         # this is not for scryfall now, but for edhrec and pdhrec
@@ -79,13 +81,24 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
         # Count how many cards from collection show up in recommended cards (maybe have a bag-of-cards list for indices)
         commander_score = 0
         num_cards = 0
+        coll_value = 0
+
+        # expected deck price = Sum [ prob_card_in_deck * price_card ]
+        print(weightlist)
+        print(price_df['price'])
+        expected_price = price_df['price'].dot(weightlist)
         for name, score in zip(namelist, scorelist):
             if name in collection:
                 commander_score += score
                 num_cards += 1
+                found = price_df[(price_df['name']==name) | (name + ' // ' in price_df['name'])]['price'].iloc[0]
+                if found is None:
+                    print(f' could not find price for {name}: {found}')
+                coll_value += found
         #if len(namelist) > 100:
         #    commander_score *= 100/len(namelist)
         print(f"Score: {commander_score:3.3f}\tNum Cards: {num_cards:3d}")
+        print(f"Average Deck Price: ${expected_price:3.3f}\tValue of Owned Cards: ${coll_value:3.3f}")
         if commander_score > score_threshold:
             commander_rank = get_index_rank(commander_score, best_scores)
             if commander_rank > -1:
@@ -143,10 +156,20 @@ def get_commander_cardlist(commander_name : str, pdh : bool = False):
 
 # Looks at the cards NOT in my collection
 # calculates the score/price ratio for each card and sorts in descending order
-def get_scoreprice_list(commander_name :str):
-    cardlist = get_commander_cardlist(commander_name)
+def get_pricelist(cardlist : list):
+    cardlist_df = pandas.DataFrame(cardlist, columns=cardlist[0].keys())
+    price_reference = pandas.read_csv('data/scryfall/price_reference.csv', index_col=0)
 
-    return None
+    card_prices = cardlist_df.merge(price_reference, on='name', how='left')
+    # there are cards that don't match due to edhrec naming dfcs
+    for row in card_prices[pandas.isna(card_prices['price'])].itertuples():
+        print(row)
+        price_row = price_reference[price_reference['name'].str.contains(f'{row.name} // ', regex=True)]
+        card_prices[card_prices['name'] == row.name].at[0,'price'] = price_row['price'].iloc[0]
+
+    prices = card_prices[['name', 'price']]
+
+    return prices
 
 def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False):
     # test color identity filtering

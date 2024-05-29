@@ -251,7 +251,7 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
     page=1
     cards = pd.DataFrame(columns=['name','color_identity','keywords', 'oracle_text'])
     while has_next_page:
-        result_json = requests.get(f'https://api.scryfall.com/cards/search?q={query_str}game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
+        result_json = requests.get(f'https://api.scryfall.com/cards/search?q={query_str}+cheapest%3Ausd+game%3Apaper&unique=cards&order=edhrec&page={page}&format=json').json()
         if result_json['object']=='error':
             print(f'request error: {result_json["code"]}, {result_json["status"]}')
             print(result_json['details'])
