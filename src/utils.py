@@ -1,10 +1,11 @@
 from bs4 import BeautifulSoup
-import pandas
+import pandas as pd
 import requests
 from urllib.parse import quote
 from unidecode import unidecode
 import re
 import time
+
 
 CI_MAPPING = {'rakdos': {'B','R'}, 'golgari': {'B','G'}, 'selesnya':{'G','W'}, 'boros':{'R','W'}, 'dimir':{'U','B'},
                'azorius': {'W','U'}, 'orzhov':{'W','B'}, 'izzet':{'U','R'}, 'simic':{'U','G'}, 'gruul':{'R','G'},
@@ -30,7 +31,7 @@ def valid_ci(ci : str):
     return valid
 
 def get_ci_set(ci:str):
-    ci_set = {}
+    ci_set = set()
     if ci in CI_MAPPING.keys():
         ci_set = CI_MAPPING[ci]
     elif ci != 'c':
@@ -38,25 +39,28 @@ def get_ci_set(ci:str):
     return ci_set
 
 # given a series of names, format them into keys for edhrec.com
-def format_keys(names : pandas.Series) -> list:
+def format_keys(names : pd.Series) -> pd.Series:
     _keys = names.apply(lambda name: unidecode(re.sub(' \/\/.*', '', name)))
     _keys = _keys.apply(lambda name: re.sub('[^a-zA-Z0-9\- ]', '', name))
     _keys = _keys.apply(lambda name: re.sub('[ ]{2,}', ' ', name))
-    keys = _keys.apply(lambda _name: re.sub(' ', '-', _name).lower()).to_list()
+    keys = _keys.apply(lambda _name: re.sub(' ', '-', _name).lower())
     return keys
 
 def format_scryfall_string(s : str):
     # Kongming, "Sleeping Dragon"
     fs = re.sub('\"', '\'', s)
-    fs = quote(fs, safe=' ')
+    fs = quote(fs, safe=' %')
     fs = re.sub('\s+', '+', fs)
     return fs
 
 # score function for cards
 # low sample sizes get reduced impact scores due to high variance
-def get_score(num : int, potential : int, synergy : float, pdh : bool = False) -> float:
+def get_score(row, pdh : bool = False) -> float:
     #return 1 + (1-math.exp(-(num/potential)))/(1-math.exp(-1))
     #return 2-((num/potential)-1)**2
+    potential=row['potential_decks']
+    num = row['num_decks']
+    synergy = row['synergy']
     if potential < 5:
         return 1 + ((num-0.5)/potential)**3 + max(0,synergy)**4
     return 1 + (num/potential)**2 + max(0,synergy)

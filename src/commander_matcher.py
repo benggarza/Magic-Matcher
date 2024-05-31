@@ -1,36 +1,36 @@
 import requests
-import pandas
+import pandas as pd
 import re
 import time
 import math
 from unidecode import unidecode
 from math import sqrt
 import sys
+from os import path
 from utils import valid_ci, format_keys, get_score, insert, get_index_rank, get_ci_set
-from requester import get_cardlist, get_commanders_from_scryfall
+from requester import get_cardlist, get_commanders_from_scryfall, import_collection, import_commanders, import_pdh_commanders
 
 def search_my_commanders(num_top : int = 10, score_threshold : float = 0, pdh : bool = False):
     # Grab list of commanders
-    commander_df = pandas.read_csv('data/collection/pdh_commanders.csv' if pdh else 'data/collection/commanders.csv')
-    commander_names = commander_df['Name'].drop_duplicates()
+    commander_df = pd.read_csv('data/collection/pdh_commanders.csv' if pdh else 'data/collection/commanders.csv')
+    commander_names = commander_df['name']
     commander_keys = format_keys(commander_names)
 
-    collection_df = pandas.read_csv('data/collection/collection.csv')
-    collection_names = collection_df['Name'].drop_duplicates().to_list()
+    collection = pd.read_csv('data/collection/collection.csv',index_col=0)
 
-    search_commanders(commander_keys, commander_names, collection_names, 'my', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
+    search_commanders(commander_keys, commander_names, collection, 'my', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
 
 def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_threshold : float = 0, start : int = 0, ci : str = None, pdh : bool = False):
     if ci is not None and not valid_ci(ci):
             print(f"Error: Invalid color identity {ci}")
             exit(1)
 
-    collection_df = pandas.read_csv('data/collection/collection.csv')
-    collection_names = collection_df['Name'].drop_duplicates().to_list()
+    collection_df = pd.read_csv('data/collection/collection.csv',index_col=0).drop_duplicates()
+    #collection_names = collection_df['Name'].drop_duplicates().to_list()
 
-    commanders = pandas.DataFrame()
+    commanders = pd.DataFrame()
     try:
-        commanders = pandas.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv', converters={'color_identity': eval})
+        commanders = pd.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv', converters={'color_identity': eval})
     except:
         print("Downloading commander list from scryfall...")
         commanders = get_commanders_from_scryfall(pdh=pdh)
@@ -46,20 +46,20 @@ def search_all_commanders(num_top : int = 10, depth : int = sys.maxsize, score_t
 
     commander_keys = format_keys(commander_names)
 
-    search_commanders(commander_keys, commander_names, collection_names, ci if ci is not None else 'all', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
+    search_commanders(commander_keys, commander_names, collection_df, ci if ci is not None else 'all', num_top=num_top, score_threshold=score_threshold, pdh=pdh)
 
-def search_commanders(commander_keys : pandas.Series, commander_names : pandas.Series, collection : list, category_name : str,
+# TODO: remove as many of these iterations as possible, replace with merges, vector operations
+def search_commanders(commander_keys : pd.Series, commander_names : pd.Series, collection : pd.DataFrame, category_name : str,
                       num_top : int = 10, score_threshold : float = 0,
                       pdh : bool = False):
-    best_commanders = [""]*num_top
-    best_scores = [0]*num_top
-    best_nums = [0]*num_top
+    
+    commander_results = []
 
-    skiplist = pandas.read_csv('data/collection/skip.csv')['name'].to_list()
+    skiplist = pd.read_csv('data/collection/skip.csv')['name'].to_list()
     # For each commander...
     for i, (commander_name, commander_key) in enumerate(zip(commander_names, commander_keys)):
         # skip commanders in skiplist
-        if commander_name in skiplist:
+        if commander_name in skiplist['name']:
             print(f"{commander_name} found in skiplist, skipping...")
             continue
         print(f"{i+1}/{len(commander_names)}: Evaluating {commander_name}")
@@ -68,108 +68,58 @@ def search_commanders(commander_keys : pandas.Series, commander_names : pandas.S
             print(f'Error: {commander_name} ({commander_key}) did not return cardlist. Skipping..')
             continue
 
-        namelist = [card['name'] for card in cardlist]
-        scorelist = [get_score(card['num_decks'],card['potential_decks'], card['synergy'], pdh=pdh) for card in cardlist]
-        weightlist = pandas.Series([card['num_decks']/card['potential_decks'] for card in cardlist])
-        price_df = get_pricelist(cardlist)
-        #print(namelist)
+        cardlist['score'] = cardlist.apply(get_score, axis=1, pdh=pdh)
 
-        # this is not for scryfall now, but for edhrec and pdhrec
-        # if i can setup storage of their lists, i can remove the sleep
-        #time.sleep(0.5)
+        in_collection = cardlist.merge(collection, on='oracle_id', how='inner')
+        commander_score = in_collection['score'].sum()
+        num_cards = len(in_collection)
+        
 
-        # Count how many cards from collection show up in recommended cards (maybe have a bag-of-cards list for indices)
-        commander_score = 0
-        num_cards = 0
-        coll_value = 0
-
-        # expected deck price = Sum [ prob_card_in_deck * price_card ]
-        print(weightlist)
-        print(price_df['price'])
-        expected_price = price_df['price'].dot(weightlist)
-        for name, score in zip(namelist, scorelist):
-            if name in collection:
-                commander_score += score
-                num_cards += 1
-                found = price_df[(price_df['name']==name) | (name + ' // ' in price_df['name'])]['price'].iloc[0]
-                if found is None:
-                    print(f' could not find price for {name}: {found}')
-                coll_value += found
-        #if len(namelist) > 100:
-        #    commander_score *= 100/len(namelist)
         print(f"Score: {commander_score:3.3f}\tNum Cards: {num_cards:3d}")
-        print(f"Average Deck Price: ${expected_price:3.3f}\tValue of Owned Cards: ${coll_value:3.3f}")
-        if commander_score > score_threshold:
-            commander_rank = get_index_rank(commander_score, best_scores)
-            if commander_rank > -1:
-                insert(commander_score, commander_rank, best_scores)
-                insert(commander_name, commander_rank, best_commanders)
-                insert(num_cards, commander_rank, best_nums)
+        commander_results.append({'name':commander_name, 'score':commander_score,'num_cards':num_cards})
 
-    # trim any empty elements from the lists
-    i = num_top
-    for i in range(num_top-1, 0, -1):
-        if best_scores[i-1] != 0:
-            break
-    best_commanders = best_commanders[:i]
-    best_scores = best_scores[:i]
-    best_nums = best_nums[:i]
+    commander_results_df = pd.DataFrame(commander_results, columns=['name','score','num_cards'])
+    commander_results_df.sort_values(by=['score','num_cards'], axis=0, ascending=False, ignore_index=True, inplace=True)
 
     print()
     # Show the commanders with the top counts
     with open(f'reports/commanderlists/top_{category_name}_{"pdh_" if pdh else ""}commanders.txt','w') as f:
-        for rank, (cname, cscore, cnum) in enumerate(zip(best_commanders, best_scores, best_nums)):
-            print(f"Rank {rank+1:2d}:\t{cname:31}\tnum cards {cnum:3d}\t score {cscore:3.3f}")
-            f.write(f"Rank {rank+1:2d}:\t{cname:31}\tnum cards {cnum:3d}\t score {cscore:3.3f}\n")
+        print(category_name)
+        print(f"Rank:\tCommander Name\t\t\t\t\t\t\t\tNum Cards\tScore")
+        f.write(f"Rank:\tCommander Name \t\t\t\t\t\t\t\tNum Cards\tScore\n")
+        for row in commander_results_df.itertuples(index=True):
+            rank = row.Index
+            if rank > num_top:
+                break
+            cname = row.name
+            cscore = row.score
+            cnum = row.num_cards
+            print(f"{rank+1:2d}:\t{cname:70}\t{cnum:3d}\t\t{cscore:3.1f}")
+            f.write(f"{rank+1:2d}:\t{cname:70}\t{cnum:3d}\t\t{cscore:3.1f}\n")
 
 def get_commander_cardlist(commander_name : str, pdh : bool = False):
-    commander_df = pandas.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv')
+    commander_df = pd.read_csv(f'data/scryfall/all_{"pdh_" if pdh else ""}commanders.csv')
     if commander_name not in commander_df['name'].to_list():
         print(f"Error: {commander_name} is an invalid commander name")
         exit(1)
 
-    commander_key = format_keys(pandas.Series([commander_name]))[0]
+    commander_key = format_keys(pd.Series([commander_name]))[0]
 
-    collection_df = pandas.read_csv('data/collection/collection.csv')
-    collection_names = collection_df['Name'].drop_duplicates().to_list()
+    collection = pd.read_csv('data/collection/collection.csv',index_col=0)
 
     rec_cardlist = get_cardlist(commander_key, pauper=pdh)
-    namelist = [card['name'] for card in rec_cardlist]
-    percentlist = [card['num_decks']/card['potential_decks'] for card in rec_cardlist]
-    scorelist = [get_score(card['num_decks'], card['potential_decks']) for card in rec_cardlist]
+    rec_cardlist['score'] = rec_cardlist.apply(get_score, axis=1, pdh=pdh)
 
-    cardlist = []
-    sum_score = 0
-    print(f"\n{commander_name}\n")
-    for name, percent, score in zip(namelist, percentlist, scorelist):
-        if name in collection_names:
-            print(f"{name:31}\t{percent:.0%}")
-            cardlist.append((name, percent))
-            sum_score += score
+    in_collection = rec_cardlist.merge(collection, on='oracle_id', how='inner')
+    commander_score = in_collection['score'].sum()
+    num_cards = len(in_collection)
 
     with open(f'reports/cardlists/{commander_name}_{"pdh_" if pdh else ""}cardlist.txt', 'w') as f:
-        f.write(f"{commander_name:31}\tscore: {sum_score:3.3f}\tnum cards: {len(cardlist):3d}\n\n")
-        for card in cardlist:
-            f.write(f"{card[0]:31}\t{card[1]:3.0%}\n")
+        f.write(f"{commander_name:80}\tscore: {commander_score:3.3f}\tnum cards: {num_cards:3d}\n\n")
+        for card in in_collection.itertuples():
+            f.write(f"{card.name:80}\t{card.score:3.0%}\n")
 
-    return cardlist
-
-# Looks at the cards NOT in my collection
-# calculates the score/price ratio for each card and sorts in descending order
-def get_pricelist(cardlist : list):
-    cardlist_df = pandas.DataFrame(cardlist, columns=cardlist[0].keys())
-    price_reference = pandas.read_csv('data/scryfall/price_reference.csv', index_col=0)
-
-    card_prices = cardlist_df.merge(price_reference, on='name', how='left')
-    # there are cards that don't match due to edhrec naming dfcs
-    for row in card_prices[pandas.isna(card_prices['price'])].itertuples():
-        print(row)
-        price_row = price_reference[price_reference['name'].str.contains(f'{row.name} // ', regex=True)]
-        card_prices[card_prices['name'] == row.name].at[0,'price'] = price_row['price'].iloc[0]
-
-    prices = card_prices[['name', 'price']]
-
-    return prices
+    return in_collection
 
 def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False):
     # test color identity filtering
@@ -200,16 +150,26 @@ def search_all_color_identities(num_top : int = sys.maxsize, pdh : bool = False)
     # search five color
     search_all_commanders(20, 2000, 0, ci='wubrg', pdh=pdh)
 
+def init():
+    if not path.exists('data/collection/collection.csv'):
+        import_collection()
+    if not path.exists('data/collection/commanders.csv'):
+        import_commanders()
+    if not path.exists('data/collection/pdh_commanders.csv'):
+        import_pdh_commanders()
+
 def main():
+    init()
     # start with a general top list
-    search_all_commanders(num_top=50)
     search_all_commanders(num_top=50,pdh=True)
+    #search_all_commanders(num_top=50,pdh=True, start=5290)
     # then search through each color identity
-    search_all_color_identities(num_top=50)
-    search_all_color_identities(num_top=50, pdh=True)
+    search_all_color_identities(num_top=50,pdh=True)
+    #search_all_commanders(num_top=20,ci='w')
+    #search_all_color_identities(num_top=50, pdh=True)
     # THEN search through my commanders
-    search_my_commanders(30)
-    search_my_commanders(30, pdh=True)
+    ##search_my_commanders(30)
+    #search_my_commanders(30, pdh=True)
 
 if __name__ == '__main__':
     main()
