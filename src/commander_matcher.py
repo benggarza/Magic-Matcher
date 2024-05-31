@@ -55,7 +55,7 @@ def search_commanders(commander_keys : pd.Series, commander_names : pd.Series, c
     
     commander_results = []
 
-    skiplist = pd.read_csv('data/collection/skip.csv')#['name'].to_list()
+    skiplist = pd.read_csv('data/collection/skip.csv')['name'].to_list()
     # For each commander...
     for i, (commander_name, commander_key) in enumerate(zip(commander_names, commander_keys)):
         # skip commanders in skiplist
@@ -160,13 +160,12 @@ def init():
 
 def main():
     init()
-    print('before search all ci call')
     # start with a general top list
-    #search_all_commanders(num_top=50,start=3547)
+    search_all_commanders(num_top=50,pdh=True)
     #search_all_commanders(num_top=50,pdh=True, start=5290)
     # then search through each color identity
-    #search_all_color_identities(num_top=50)
-    search_all_commanders(num_top=20,ci='w')
+    search_all_color_identities(num_top=50,pdh=True)
+    #search_all_commanders(num_top=20,ci='w')
     #search_all_color_identities(num_top=50, pdh=True)
     # THEN search through my commanders
     ##search_my_commanders(30)

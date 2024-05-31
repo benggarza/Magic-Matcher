@@ -26,8 +26,8 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
         else:
             return cardlist_df
     except:
-        print("Could not find a preexisting cardlist, querying...")
-        time.sleep(0.5)
+        #print("Could not find a preexisting cardlist, querying...")
+        time.sleep(1.0)
 
     reference = pd.DataFrame(columns=['oracle_id','name','price'])
     try:
@@ -188,7 +188,7 @@ def request_cards(rec_cardlist : pd.DataFrame):
             if pd.isna(row[col]):
                 print(f"Warning: all columns for {row['name']}[{col}] are na, most likely an unreleased card.")
                 print(row)
-                assert(False)
+                #assert(False)
             return row[col]
     for col in ['price', 'oracle_id']:
         card_info[col] = card_info.apply(merge_cols,args=(col,),axis=1)
@@ -250,6 +250,20 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
             data['oracle_text'] = ''
         card_page = data[['oracle_id', 'name', 'color_identity', 'keywords', 'oracle_text', 'prices']]
 
+        # sometimes scryfall gives us a dfc version of a nondfc card like sakashima or jetmir
+        weird_cards = card_page[card_page['name'].str.match(r'(.+) \/\/ \1')].copy()
+        if len(weird_cards) > 0:
+            print(weird_cards)
+            weird_cards['real_name'] = weird_cards['name'].str.extract(r'(.+) \/\/ \1')
+            # only <10 cards do this, so manually iterating should be ok for now
+            for weird_card in weird_cards.itertuples():
+                data_idx = data.index[data['name'] == weird_card.name][0]
+                page_idx = card_page.index[card_page['name']==weird_card.name][0]
+                oracle_id = data.loc[data_idx,'card_faces'][0]['oracle_id']
+                card_page.at[page_idx,'oracle_id'] = oracle_id
+                card_page.at[page_idx,'name'] = weird_card.real_name
+
+
         cards = pd.concat([cards, card_page], ignore_index=True)
         #print(f"{min(page*175, result_json['total_cards'])}/{result_json['total_cards']} ({min(1.0, page*175/result_json['total_cards']):.2%})")
         time.sleep(0.2)
@@ -266,9 +280,9 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         elif 'usd_etched' in prices.keys() and pd.notna(prices['usd_etched']):
             return prices['usd_etched']
         elif 'eur' in prices.keys() and pd.notna(prices['eur']):
-            return 1.1 * prices['eur']
+            return prices['eur']
         elif 'eur_foil' in prices.keys() and pd.notna(prices['eur_foil']):
-            return 1.1 * prices['eur_foil']
+            return prices['eur_foil']
         else:
             return pd.NA
     cards['price'] = cards['prices'].map(choose_price)
