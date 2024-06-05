@@ -23,5 +23,6 @@ To use these functions, edit the main function with your choice of function call
 
 - add terminal interaction support
 - GUI integration
-- add estimated upgrade costs with each commander score (something like minimum cost to increase score to 150 or something)
 - initialize with scryfall bulk download (~100Mb download)
+- check edhrec/pdhrec masterlists before querying
+- low score and low missing score indicate this commander just doesn't have a strong synergistic identity. These are less likely to be buildable

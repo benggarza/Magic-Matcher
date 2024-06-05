@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import time
-from utils import format_scryfall_string
+from utils import format_keys, format_scryfall_string
 import os
 from datetime import datetime, timedelta
 
@@ -18,15 +18,45 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             os.remove(filepath)
     except:
         pass
+    # TODO: handle partner keys being backward
+    # i.e. if key = partner1-partner2, check entries for partner1-partner2 and partner2-partner1
+    """
+    if not pauper:
+        try:
+            edhrec_entries = pd.read_csv('data/edhrec/edhrecentries.csv',index_col=0)
+        except:
+            edhrec_entries = requests.get('https://edhrec.com/_next/data/EFt_4NRgLp_vNWVyemdqL/commanders.json').json()
+            edhrec_entries = pd.DataFrame(edhrec_entries['pageProps']['data']['cardlist'], columns=['name','sanitized','num_decks'])
+            edhrec_entries['key'] = edhrec_entries['sanitized']
+            edhrec_entries['key_flipped'] = edhrec_entries['name'] DO SOMETHING
+            edhrec_entries.drop(['sanitized','name'],axis=1,inplace=True)
+            edhrec_entries.to_csv('data/edhrec/edhrecentries.csv')
+        if  len(edhrec_entries[(edhrec_entries['key'] == key]) | (edhrec_entries['key_flipped'] == key])) ==0:
+            print(f'edhrec does not have a list for {key}, skipping\n\n')
+            return None
+        if edhrec_entries[edhrec_entries['key'] == key]['num_decks'].iloc[0] < 10:
+            print(f"edhrec does not have enough decks for {key}, skipping")
+            return None
+    else:
+        try:
+            pdhrec_entries = pd.read_csv('data/edhrec/pdhrecentries.csv',index_col=0)
+        except:
+            pdhrec_entries = requests.get('https://www.pdhrec.com/commandernames.json').json()
+            pdhrec_entries = pd.Series(pdhrec_entries,name='name').to_frame()
+            pdhrec_entries['key'] = format_keys(pdhrec_entries['name'])
+            pdhrec_entries.to_csv('data/edhrec/pdhrecentries.csv')
+        if len(pdhrec_entries[pdhrec_entries['key'] == key] == 0):
+            print(f"pdhrec does not have a page for {key}, skipping")
+            return None
+    """
     try:
-        # TODO: eventually this df will not have name or price in columns, we need to grab them from the reference dataframe
         cardlist_df = pd.read_csv(filepath, index_col=0)
         if len(cardlist_df) == 0:
             return None
         else:
             return cardlist_df
     except:
-        #print("Could not find a preexisting cardlist, querying...")
+        print(f"Could not find a preexisting cardlist with key {key}")
         time.sleep(1.0)
 
     reference = pd.DataFrame(columns=['oracle_id','name','price'])
@@ -70,6 +100,8 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
             name = card['alt']
             # a bad? encoding of lim-dûl's paladin made this an issue
             name = re.sub('Ã»', 'û', name)
+            # Lórien Revealed
+            name = re.sub('Ã³', 'ó', name)
             #pdhrec doesn't handle kongmind's name well, so we have a manual fix
             if 'Kongming,' in name:
                 name = 'Kongming, \"Sleeping Dragon\"'
@@ -109,7 +141,6 @@ def get_cardlist(key : str, pauper : bool = False) -> pd.DataFrame:
     card_info = request_cards(cardlist_df)
     assert(len(card_info[card_info['oracle_id'].isna()])==0)
 
-    # TODO:we will change this later so we just return the dataframe and don't save name or price in the cardlist df either
     card_info[['oracle_id','name','num_decks','potential_decks','synergy','price']].to_csv(filepath)
     return card_info
 
@@ -166,34 +197,36 @@ def request_cards(rec_cardlist : pd.DataFrame):
     missing_info_mask = card_info.isna().any(axis=1)
     # cols: oracle_id, name, color_identity, keywords, oracle_text, price
     cards_missing = card_info['name'][missing_info_mask | expired_price_mask]
-    print(f"Querying scryfall for {len(cards_missing)} cards")
-    scryfall_card_data = scryfall_cardlist_query( card_info['name'][missing_info_mask | expired_price_mask] )
+    if len(cards_missing) > 0:
+        print(f"Querying scryfall for {len(cards_missing)} cards")
+        scryfall_card_data = scryfall_cardlist_query( card_info['name'][missing_info_mask | expired_price_mask] )
 
-    # make both the scryfall name and rec name '<frontside name> // '
-    scryfall_card_data['_dfc_name'] = scryfall_card_data['name'].str.extract(r'(.* \/\/ )')
+        # make both the scryfall name and rec name '<frontside name> // '
+        scryfall_card_data['_dfc_name'] = scryfall_card_data['name'].str.extract(r'(.* \/\/ )')
 
-    # join card info with missing scryfall data
-    card_info = card_info.merge(scryfall_card_data, how='left', on='name', suffixes=('', '_scry'))
-    # join card info with missing dfc scryfall data
-    card_info = card_info.merge(scryfall_card_data, how='left', on='_dfc_name', suffixes=('','_scry_dfc'))
+        # join card info with missing scryfall data
+        card_info = card_info.merge(scryfall_card_data, how='left', on='name', suffixes=('', '_scry'))
+        # join card info with missing dfc scryfall data
+        card_info = card_info.merge(scryfall_card_data, how='left', on='_dfc_name', suffixes=('','_scry_dfc'))
 
 
-    # merge the reference, scryfall, and scryfall dfc columns
-    def merge_cols(row:pd.Series,col:str):
-        if pd.notna(row[f'{col}_scry_dfc']):
-            return row[f'{col}_scry_dfc']
-        elif f'{col}_scry' in row.index and pd.notna(row[f'{col}_scry']):
-            return row[f'{col}_scry']
-        else:
-            if pd.isna(row[col]):
-                print(f"Warning: all columns for {row['name']}[{col}] are na, most likely an unreleased card.")
-                print(row)
-                #assert(False)
-            return row[col]
-    for col in ['price', 'oracle_id']:
-        card_info[col] = card_info.apply(merge_cols,args=(col,),axis=1)
-    card_info.dropna(subset='price', inplace=True)
-    card_info.drop(card_info.filter(regex='.*_scry.*').columns, axis=1, inplace=True)
+        # merge the reference, scryfall, and scryfall dfc columns
+        def merge_cols(row:pd.Series,col:str):
+            if pd.notna(row[f'{col}_scry_dfc']):
+                return row[f'{col}_scry_dfc']
+            elif f'{col}_scry' in row.index and pd.notna(row[f'{col}_scry']):
+                return row[f'{col}_scry']
+            else:
+                if pd.isna(row[col]):
+                    print(f"Warning: all columns for {row['name']}[{col}] are na, most likely an unreleased card.")
+                    print(row)
+                    #assert(False)
+                return row[col]
+        for col in ['price', 'oracle_id']:
+            card_info[col] = card_info.apply(merge_cols,args=(col,),axis=1)
+        card_info.dropna(subset='price', inplace=True)
+        card_info['price'] = card_info['price'].astype('float64')
+        card_info.drop(card_info.filter(regex='.*_scry.*').columns, axis=1, inplace=True)
     card_info.drop(columns=['_dfc_name','date'],axis=1,inplace=True)
     assert(len(card_info[card_info.isna().any(axis=1)])==0)
 
@@ -253,6 +286,8 @@ def scryfall_query(queries : list[str]) -> pd.DataFrame:
         # sometimes scryfall gives us a dfc version of a nondfc card like sakashima or jetmir
         weird_cards = card_page[card_page['name'].str.match(r'(.+) \/\/ \1')].copy()
         if len(weird_cards) > 0:
+            print("Handling weird cards:")
+            print(weird_cards.head())
             print(weird_cards)
             weird_cards['real_name'] = weird_cards['name'].str.extract(r'(.+) \/\/ \1')
             # only <10 cards do this, so manually iterating should be ok for now
@@ -328,15 +363,19 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
 
 
     partners = []
-    for commander in partner.itertuples(index=True):
-        for i in range(commander.Index+1, len(partner)):
-            commander_partner = partner.iloc[i]
-            partners_name = commander.name + ' ' + commander_partner['name']
+    for commander in partner.itertuples():
+        #for i in range(commander.Index+1, len(partner)):
+        for commander_partner in partner.itertuples():
+            #commander_partner = partner.iloc[i]
+            if commander_partner.name == commander.name:
+                continue
+            partners_name = commander.name + ' & ' + commander_partner.name
 
-            oppo_name = commander_partner['name'] + ' ' + commander.name
+            oppo_name = commander_partner.name + ' & ' + commander.name
             if oppo_name in [p['name'] for p in partners]:
                 print('oops, this commander pair is already accounted for')
-            partners_color_identity = commander.color_identity | commander_partner['color_identity']
+                continue
+            partners_color_identity = commander.color_identity | commander_partner.color_identity
             partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 
     background_query = ['t%3Abackground']
@@ -347,17 +386,24 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
     
     for commander in choose_background.itertuples():
         for bg in backgrounds.itertuples():
-            cbg_name = commander.name + ' ' + bg.name
+            cbg_name = commander.name + ' & ' + bg.name
             cbg_color_identity = commander.color_identity | bg.color_identity
             partners.append({'name':cbg_name, 'color_identity':cbg_color_identity, 'partner':'none'})
 
     
 
-    for commander in friends_forever.itertuples(index=True):
-        for i in range(commander.Index+1, len(friends_forever)):
-            commander_partner = friends_forever.iloc[i]
-            partners_name = commander.name + ' ' + commander_partner['name']
-            partners_color_identity = commander.color_identity |  commander_partner['color_identity']
+    for commander in friends_forever.itertuples():
+        #for i in range(commander.Index+1, len(friends_forever)):
+        for commander_partner in friends_forever.itertuples():
+            if commander.name == commander_partner.name:
+                continue
+            #commander_partner = friends_forever.iloc[i]
+            partners_name = commander.name + ' & ' + commander_partner.name
+            oppo_name = commander_partner.name + ' & ' + commander.name
+            if oppo_name in [p['name'] for p in partners]:
+                continue
+            partners_color_identity = commander.color_identity |  commander_partner.color_identity
+
             partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 
     #doctor_and_companion = []
@@ -374,11 +420,11 @@ def generate_partners(commanders : pd.DataFrame, pdh : bool = False) -> pd.DataF
     for commander in partner_withs.itertuples(index=True):
         partner_name = commander.partner
         commander_partner = partner_withs[partner_withs['name'] == partner_name].iloc[0]
-        partners_name = commander.name + ' ' + commander_partner['name']
+        partners_name = commander.name + ' & ' + commander_partner['name']
         partners_color_identity = commander.color_identity | commander_partner['color_identity']
 
         # try to not have duplicates e.g. Faldan and Pako and Pako and Faldan
-        if commander_partner['name'] + ' ' + commander.name in [p[0] for p in partners]:
+        if commander_partner['name'] + ' & ' + commander.name in [p['name'] for p in partners]:
             continue
         partners.append({'name':partners_name, 'color_identity':partners_color_identity, 'partner':'none'})
 

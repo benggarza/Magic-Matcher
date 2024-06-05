@@ -62,7 +62,7 @@ def get_score(row, pdh : bool = False) -> float:
     num = row['num_decks']
     synergy = row['synergy']
     if potential < 5:
-        return 1 + ((num-0.5)/potential)**3 + max(0,synergy)**4
+        return 1 + (num*0.6/potential)**2 + max(0,synergy)*0.6
     return 1 + (num/potential)**2 + max(0,synergy)
 
 # given a score and a list of top scores, return the proper index or -1
