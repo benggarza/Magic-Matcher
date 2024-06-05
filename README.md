@@ -3,7 +3,7 @@ Matches your Magic the Gathering collection with potential commanders using EDHR
 
 # Scoring
 
-A commander's score is a combination of the number of matched cards and the usage rate of each. For example, if comparing Jodah, Archmage Eternal's EDHRec page to your collection, Leyline of the Guildpact, with a 65% usage rate, is going to hold more weight than Tezzeret's Gambit, with only a 6% usage rate. A score of roughly >= 130 indicates that there are enough quality cards in your collection that you can build a decently working deck. Scores around 180-200 generally indicate a high overlap with a commander precon, which often heavily influences a commander's EDHRec page.
+A commander's score is a combination of the number of matched cards and the usage rate of each. For example, if comparing Jodah, Archmage Eternal's EDHRec page to your collection, Leyline of the Guildpact, with a 65% usage rate, is going to hold more weight than Tezzeret's Gambit, with only a 6% usage rate. A score of roughly >= 170 indicates that there are enough quality cards in your collection that you can build a decently working deck. This also tends to intersect with commander precon decklists, which often heavily influences a commander's EDHRec page.
 
 # Usage
 
@@ -21,8 +21,6 @@ To use these functions, edit the main function with your choice of function call
 
 # Todos
 
-- add terminal interaction support
 - GUI integration
 - initialize with scryfall bulk download (~100Mb download)
-- check edhrec/pdhrec masterlists before querying
-- low score and low missing score indicate this commander just doesn't have a strong synergistic identity. These are less likely to be buildable
+- check edhrec/pdhrec masterlists before querying (lists that show what commanders don't have pages)
