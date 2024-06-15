@@ -15,7 +15,8 @@ def search_my_commanders(num_top : int = 10, score_threshold : float = 0, pdh : 
     # Grab list of commanders
     commander_df = pd.read_csv('data/collection/pdh_commanders.csv' if pdh else 'data/collection/commanders.csv')
     #if ci:
-    #    commander_df = commander_df[commander_df['color_identity'] == get_ci_set(ci)]
+     #   commander_df = commander_df[commander_df['color_identity'] == get_ci_set(ci)]
+     #   print(commander_df.head())
     commander_names = commander_df.drop_duplicates()['name']
     commander_keys = format_keys(commander_names)
 
